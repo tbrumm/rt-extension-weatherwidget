@@ -20,13 +20,51 @@ $temp_unit = 'celsius' unless $temp_unit eq 'fahrenheit';
 
 my $prefs_url = RT->Config->Get('WebPath') . '/Prefs/AboutMe.html';
 
-# Safe JSON encoding for JS interpolation
-use JSON ();
-my $js_city     = JSON::encode_json($city);
-my $js_zip      = JSON::encode_json($zip);
-my $js_country  = JSON::encode_json($country);
-my $js_loc      = JSON::encode_json($display_loc);
-my $js_unit     = JSON::encode_json($temp_unit);
+# ascii(1): escapes all non-ASCII as \uXXXX — prevents Mason encoding issues
+# when loc() returns utf8-flagged strings mixed with byte-string output.
+use JSON::PP ();
+my $_j = JSON::PP->new->ascii(1);
+
+my $js_city    = $_j->encode($city);
+my $js_zip     = $_j->encode($zip);
+my $js_country = $_j->encode($country);
+my $js_loc     = $_j->encode($display_loc);
+my $js_unit    = $_j->encode($temp_unit);
+
+my $lang_tag = lc( $session{CurrentUser}->LanguageHandle->language_tag // 'en' );
+$lang_tag =~ s/_/-/g;
+my $js_lang = $_j->encode($lang_tag);
+
+# All labels + icons for JS. \x{NNNN} codepoints let ascii(1) emit \uXXXX —
+# so zero non-ASCII bytes ever reach the Mason output buffer.
+my $js_labels = $_j->encode({
+    wmo_labels => {
+        0  => loc('Clear Sky'),           1  => loc('Mainly Clear'),
+        2  => loc('Partly Cloudy'),       3  => loc('Overcast'),
+        45 => loc('Fog'),                 48 => loc('Rime Fog'),
+        51 => loc('Light Drizzle'),       53 => loc('Moderate Drizzle'),
+        55 => loc('Heavy Drizzle'),       56 => loc('Light Freezing Drizzle'),
+        57 => loc('Heavy Freezing Drizzle'),
+        61 => loc('Light Rain'),          63 => loc('Moderate Rain'),
+        65 => loc('Heavy Rain'),          66 => loc('Light Freezing Rain'),
+        67 => loc('Heavy Freezing Rain'),
+        71 => loc('Light Snow'),          73 => loc('Moderate Snow'),
+        75 => loc('Heavy Snow'),          77 => loc('Snow Grains'),
+        80 => loc('Light Showers'),       81 => loc('Moderate Showers'),
+        82 => loc('Heavy Showers'),       85 => loc('Light Snow Showers'),
+        86 => loc('Heavy Snow Showers'),
+        95 => loc('Thunderstorm'),        96 => loc('Thunderstorm with Hail'),
+        99 => loc('Thunderstorm with Heavy Hail'),
+        night   => loc('Clear Night'),    unknown => loc('Unknown'),
+    },
+    feels_like => loc('Feels like'),
+    updated    => loc('Updated'),
+    timeout    => loc('Timeout - weather data could not be retrieved.'),
+    loc_nf     => loc('Location could not be found.'),
+    geo_fail   => loc('Geocoding failed.'),
+    wx_fail    => loc('Weather data could not be loaded.'),
+    int_err    => loc('Internal error.'),
+});
 </%init>
 <&|/Widgets/TitleBox, title => loc('Weather'), bodyclass => 'p-0' &>
 
@@ -34,23 +72,23 @@ my $js_unit     = JSON::encode_json($temp_unit);
 
 % if (!$has_loc) {
   <div class="ww-s ww-noloc">
-    <span class="ww-big-icon">📍</span>
-    <p>Kein Standort im Benutzerprofil hinterlegt.</p>
+    <span class="ww-big-icon">&#x1F4CD;</span>
+    <p><% loc('No location stored in user profile.') | h %></p>
     <a href="<% $prefs_url | h %>" class="btn btn-sm btn-outline-primary">
-      Profil bearbeiten
+      <% loc('Edit profile') | h %>
     </a>
   </div>
 % } else {
 
   <div class="ww-s ww-loading">
     <div class="ww-spinner"></div>
-    <small>Wetterdaten werden geladen…</small>
+    <small><% loc('Loading weather data...') | h %></small>
   </div>
 
   <div class="ww-s ww-error" hidden>
-    <span class="ww-big-icon">⚠️</span>
+    <span class="ww-big-icon">&#x26A0;&#xFE0F;</span>
     <p class="ww-err-msg"></p>
-    <button class="btn btn-sm btn-outline-secondary ww-retry-btn">Erneut versuchen</button>
+    <button class="btn btn-sm btn-outline-secondary ww-retry-btn"><% loc('Retry') | h %></button>
   </div>
 
   <div class="ww-content" hidden>
@@ -67,7 +105,7 @@ my $js_unit     = JSON::encode_json($temp_unit);
     </div>
     <div class="ww-footer">
       <span class="ww-updated"></span>
-      <button class="ww-refresh-btn" title="Aktualisieren">↻</button>
+      <button class="ww-refresh-btn" title="Aktualisieren">&#x21BB;</button>
     </div>
   </div>
 
@@ -151,7 +189,7 @@ my $js_unit     = JSON::encode_json($temp_unit);
 
 /* dot separator between each span */
 .ww-row span + span::before {
-  content: '·';
+  content: '\00B7';
   margin: 0 0.35rem;
   opacity: 0.35;
 }
@@ -213,39 +251,46 @@ body.terminal .ww-spinner { border-color: rgba(45,122,45,0.15); border-top-color
   var COUNTRY  = <% $js_country | n %>;
   var DISP_LOC = <% $js_loc     | n %>;
   var UNIT     = <% $js_unit    | n %>;
+  var LANG     = <% $js_lang    | n %>;
+  var L        = <% $js_labels  | n %>;
   var CACHE_KEY = 'ww_v1_' + (CITY + '|' + ZIP + '|' + COUNTRY).replace(/[^a-z0-9]/gi, '_');
   var CACHE_TTL = 30 * 60 * 1000;
 
-  /* ---- WMO weather code map -------------------------------- */
-  var WMO = {
-    0:  { de: 'Klarer Himmel',              icon: '☀️',  bg: 'sunny'  },
-    1:  { de: 'Überwiegend klar',           icon: '🌤️', bg: 'sunny'  },
-    2:  { de: 'Teilweise bewölkt',          icon: '⛅',  bg: 'cloudy' },
-    3:  { de: 'Bedeckt',                    icon: '☁️',  bg: 'cloudy' },
-    45: { de: 'Nebel',                      icon: '🌫️', bg: 'fog'    },
-    48: { de: 'Nebel mit Reifbildung',      icon: '🌫️', bg: 'fog'    },
-    51: { de: 'Leichter Nieselregen',       icon: '🌦️', bg: 'rain'   },
-    53: { de: 'Mäßiger Nieselregen',        icon: '🌦️', bg: 'rain'   },
-    55: { de: 'Starker Nieselregen',        icon: '🌧️', bg: 'rain'   },
-    56: { de: 'Gefrierender Nieselregen',   icon: '🌧️', bg: 'rain'   },
-    57: { de: 'Gefrierender Nieselregen',   icon: '🌧️', bg: 'rain'   },
-    61: { de: 'Leichter Regen',             icon: '🌧️', bg: 'rain'   },
-    63: { de: 'Mäßiger Regen',              icon: '🌧️', bg: 'rain'   },
-    65: { de: 'Starker Regen',              icon: '🌧️', bg: 'rain'   },
-    66: { de: 'Gefrierender Regen',         icon: '🌨️', bg: 'snow'   },
-    67: { de: 'Gefrierender Regen (stark)', icon: '🌨️', bg: 'snow'   },
-    71: { de: 'Leichter Schneefall',        icon: '🌨️', bg: 'snow'   },
-    73: { de: 'Mäßiger Schneefall',         icon: '❄️',  bg: 'snow'   },
-    75: { de: 'Starker Schneefall',         icon: '❄️',  bg: 'snow'   },
-    77: { de: 'Schneekörner',               icon: '🌨️', bg: 'snow'   },
-    80: { de: 'Leichte Regenschauer',       icon: '🌦️', bg: 'rain'   },
-    81: { de: 'Mäßige Regenschauer',        icon: '🌧️', bg: 'rain'   },
-    82: { de: 'Starke Regenschauer',        icon: '🌧️', bg: 'rain'   },
-    85: { de: 'Leichte Schneeschauer',      icon: '🌨️', bg: 'snow'   },
-    86: { de: 'Starke Schneeschauer',       icon: '❄️',  bg: 'snow'   },
-    95: { de: 'Gewitter',                   icon: '⛈️',  bg: 'storm'  },
-    96: { de: 'Gewitter mit Hagel',         icon: '⛈️',  bg: 'storm'  },
-    99: { de: 'Gewitter mit schwerem Hagel',icon: '⛈️',  bg: 'storm'  }
+  /* ---- Icons as JS \uXXXX escapes -- zero non-ASCII in Mason source --- */
+  var IC = {
+    0:  '\u2600\uFE0F',
+    1:  '\uD83C\uDF24\uFE0F',
+    2:  '\u26C5',
+    3:  '\u2601\uFE0F',
+    45: '\uD83C\uDF2B\uFE0F',
+    48: '\uD83C\uDF2B\uFE0F',
+    51: '\uD83C\uDF26\uFE0F',
+    53: '\uD83C\uDF26\uFE0F',
+    55: '\uD83C\uDF27\uFE0F',
+    56: '\uD83C\uDF27\uFE0F',
+    57: '\uD83C\uDF27\uFE0F',
+    61: '\uD83C\uDF27\uFE0F',
+    63: '\uD83C\uDF27\uFE0F',
+    65: '\uD83C\uDF27\uFE0F',
+    66: '\uD83C\uDF28\uFE0F',
+    67: '\uD83C\uDF28\uFE0F',
+    71: '\uD83C\uDF28\uFE0F',
+    73: '\u2744\uFE0F',
+    75: '\u2744\uFE0F',
+    77: '\uD83C\uDF28\uFE0F',
+    80: '\uD83C\uDF26\uFE0F',
+    81: '\uD83C\uDF27\uFE0F',
+    82: '\uD83C\uDF27\uFE0F',
+    85: '\uD83C\uDF28\uFE0F',
+    86: '\u2744\uFE0F',
+    95: '\u26C8\uFE0F',
+    96: '\u26C8\uFE0F',
+    99: '\u26C8\uFE0F',
+    night:   '\uD83C\uDF19',
+    unknown: '\uD83C\uDF21\uFE0F',
+    pin:     '\uD83D\uDCCD',
+    wind:    '\uD83D\uDCA8',
+    hum:     '\uD83D\uDCA7'
   };
 
   /* ---- DOM refs -------------------------------------------- */
@@ -275,7 +320,7 @@ body.terminal .ww-spinner { border-color: rgba(45,122,45,0.15); border-top-color
     [sLoad, sErr, sCont].forEach(function(e) { e.hidden = true; });
     sLoad.hidden = false;
     _loadTimer = setTimeout(function() {
-      showError('Zeitüberschreitung — Wetterdaten konnten nicht abgerufen werden.');
+      showError(L.timeout);
     }, 12000);
   }
 
@@ -289,29 +334,31 @@ body.terminal .ww-spinner { border-color: rgba(45,122,45,0.15); border-top-color
     var cur   = weather.current;
     var code  = cur.weather_code;
     var isDay = cur.is_day !== 0;
-    var info  = WMO[code] || WMO[Math.floor(code / 10) * 10] ||
-                { de: 'Unbekannt', icon: '🌡️', bg: 'cloudy' };
+    var c10   = Math.floor(code / 10) * 10;
+    var icon  = IC[code]  || IC[c10]  || IC.unknown;
+    var label = L.wmo_labels[code] || L.wmo_labels[c10] || L.wmo_labels.unknown;
 
     if (!isDay && code === 0) {
-      info = { de: 'Klare Nacht', icon: '🌙', bg: 'night' };
+      icon  = IC.night;
+      label = L.wmo_labels.night;
     }
 
-    var unit   = UNIT === 'fahrenheit' ? '°F' : '°C';
+    var deg    = '\u00B0' + (UNIT === 'fahrenheit' ? 'F' : 'C');
     var temp   = Math.round(cur.temperature_2m);
     var feels  = Math.round(cur.apparent_temperature);
     var wind   = Math.round(cur.wind_speed_10m);
     var hum    = cur.relative_humidity_2m;
     var now    = new Date();
-    var timeStr = now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    var timeStr = now.toLocaleTimeString(LANG, { hour: '2-digit', minute: '2-digit' });
 
-    iconEl.textContent  = info.icon;
-    tempEl.textContent  = temp + unit;
-    condEl.textContent  = info.de;
-    locEl.textContent   = '📍 ' + DISP_LOC;
-    feelsEl.textContent = 'Gefühlt ' + feels + unit;
-    windEl.textContent  = '💨 ' + wind + ' km/h';
-    humEl.textContent   = '💧 ' + hum + ' %';
-    updEl.textContent   = 'Aktualisiert ' + timeStr;
+    iconEl.textContent  = icon;
+    tempEl.textContent  = temp + deg;
+    condEl.textContent  = label;
+    locEl.textContent   = IC.pin + ' ' + DISP_LOC;
+    feelsEl.textContent = L.feels_like + ' ' + feels + deg;
+    windEl.textContent  = IC.wind + ' ' + wind + ' km/h';
+    humEl.textContent   = IC.hum + ' ' + hum + ' %';
+    updEl.textContent   = L.updated + ' ' + timeStr;
 
     showState(sCont);
 
@@ -337,7 +384,7 @@ body.terminal .ww-spinner { border-color: rgba(45,122,45,0.15); border-top-color
         return r.json();
       })
       .then(function(data) { render(data); })
-      .catch(function() { showError('Wetterdaten konnten nicht geladen werden.'); });
+      .catch(function() { showError(L.wx_fail); });
   }
 
   function geocodeAndLoad() {
@@ -348,17 +395,17 @@ body.terminal .ww-spinner { border-color: rgba(45,122,45,0.15); border-top-color
     if (COUNTRY) params.push('country='    + encodeURIComponent(COUNTRY));
 
     fetch('https://nominatim.openstreetmap.org/search?' + params.join('&'), {
-      headers: { 'Accept-Language': 'de' }
+      headers: { 'Accept-Language': LANG }
     })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (!data || !data.length) {
-          showError('Standort "' + DISP_LOC + '" konnte nicht gefunden werden.');
+          showError(L.loc_nf);
           return;
         }
         fetchWeather(parseFloat(data[0].lat), parseFloat(data[0].lon));
       })
-      .catch(function() { showError('Geocoding fehlgeschlagen.'); });
+      .catch(function() { showError(L.geo_fail); });
   }
 
   /* ---- Init ------------------------------------------------ */
@@ -391,7 +438,7 @@ body.terminal .ww-spinner { border-color: rgba(45,122,45,0.15); border-top-color
   try {
     init();
   } catch(e) {
-    showError('Interner Fehler: ' + e.message);
+    showError(L.int_err + ' ' + e.message);
   }
 })();
 </script>
