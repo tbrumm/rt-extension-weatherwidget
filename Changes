@@ -1,0 +1,13 @@
+Revision history for RT-Extension-WeatherWidget
+
+1.0.0  2026-04-26
+  - Initial release
+  - Reads City / Zip / Country from the logged-in RT user's profile
+  - Geocoding via Nominatim (OpenStreetMap), weather via Open-Meteo
+  - WMO weather-code mapping with German labels and emoji icons
+  - Condition-specific gradient panels (sunny / cloudy / rain / snow / storm / fog / night)
+  - Theme-aware outer widget via Bootstrap CSS variables
+  - 30-minute sessionStorage cache to avoid redundant API calls
+  - Manual refresh button
+  - Friendly no-location state with link to user profile
+  - HTMX-safe self-cleaning timer

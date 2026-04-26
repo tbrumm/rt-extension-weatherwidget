@@ -1,0 +1,10 @@
+^\.git/
+\.gitignore
+^blib/
+^inc/
+^Makefile$
+^MYMETA\.(yml|json)$
+^RT-Extension-WeatherWidget-.*\.tar\.gz$
+\.swp$
+\.DS_Store
+^\.idea/

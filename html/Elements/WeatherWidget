@@ -1,0 +1,400 @@
+<%args>
+$HasResults => undef
+</%args>
+<%init>
+my $wid = 'ww' . int(rand(999999));
+
+my $user     = $session{CurrentUser}->UserObj;
+my $city     = $user->City    // '';
+my $zip      = $user->Zip     // '';
+my $country  = $user->Country // '';
+my $has_loc  = ($city || $zip) ? 1 : 0;
+
+my $display_loc = join(', ', grep { $_ } ($city, $country));
+
+my %opts;
+my @_raw = RT->Config->Get('WeatherWidgetOptions');
+%opts = @_raw if @_raw && (@_raw % 2 == 0);
+my $temp_unit = lc($opts{TemperatureUnit} // 'celsius');
+$temp_unit = 'celsius' unless $temp_unit eq 'fahrenheit';
+
+my $prefs_url = RT->Config->Get('WebPath') . '/Prefs/AboutMe.html';
+
+# Safe JSON encoding for JS interpolation
+use JSON ();
+my $js_city     = JSON::encode_json($city);
+my $js_zip      = JSON::encode_json($zip);
+my $js_country  = JSON::encode_json($country);
+my $js_loc      = JSON::encode_json($display_loc);
+my $js_unit     = JSON::encode_json($temp_unit);
+</%init>
+<&|/Widgets/TitleBox, title => loc('Weather'), bodyclass => 'p-0' &>
+
+<div class="ww-wrap" id="<% $wid %>">
+
+% if (!$has_loc) {
+  <div class="ww-s ww-noloc">
+    <span class="ww-big-icon">📍</span>
+    <p>Kein Standort im Benutzerprofil hinterlegt.</p>
+    <a href="<% $prefs_url | h %>" class="btn btn-sm btn-outline-primary">
+      Profil bearbeiten
+    </a>
+  </div>
+% } else {
+
+  <div class="ww-s ww-loading">
+    <div class="ww-spinner"></div>
+    <small>Wetterdaten werden geladen…</small>
+  </div>
+
+  <div class="ww-s ww-error" hidden>
+    <span class="ww-big-icon">⚠️</span>
+    <p class="ww-err-msg"></p>
+    <button class="btn btn-sm btn-outline-secondary ww-retry-btn">Erneut versuchen</button>
+  </div>
+
+  <div class="ww-content" hidden>
+    <div class="ww-top">
+      <div class="ww-icon"></div>
+      <div class="ww-temp"></div>
+      <div class="ww-cond"></div>
+    </div>
+    <div class="ww-row">
+      <span class="ww-loc"></span>
+      <span class="ww-feels"></span>
+      <span class="ww-wind"></span>
+      <span class="ww-hum"></span>
+    </div>
+    <div class="ww-footer">
+      <span class="ww-updated"></span>
+      <button class="ww-refresh-btn" title="Aktualisieren">↻</button>
+    </div>
+  </div>
+
+% }
+</div><!-- .ww-wrap -->
+
+<style>
+/* ---- WeatherWidget ------------------------------------------ */
+
+.ww-wrap {
+  background: #fff;
+  border-radius: 0 0 6px 6px;
+  display: flex;
+  flex-direction: column;
+}
+[data-bs-theme=dark] .ww-wrap { background: #1a1f2e; }
+
+/* Loading / error / noloc states */
+.ww-s {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.45rem;
+  padding: 0.9rem 1rem;
+  flex: 1;
+}
+
+.ww-spinner {
+  width: 22px; height: 22px;
+  border: 3px solid rgba(0,0,0,0.1);
+  border-top-color: var(--bs-primary);
+  border-radius: 50%;
+  animation: ww-spin 0.75s linear infinite;
+}
+[data-bs-theme=dark] .ww-spinner { border-color: rgba(255,255,255,0.12); border-top-color: var(--bs-primary); }
+@keyframes ww-spin { to { transform: rotate(360deg); } }
+
+.ww-big-icon { font-size: 1.9rem; line-height: 1; }
+
+.ww-noloc p, .ww-error p {
+  font-size: 0.82rem; color: #666; margin: 0; max-width: 200px;
+}
+[data-bs-theme=dark] .ww-noloc p,
+[data-bs-theme=dark] .ww-error p { color: #8899b0; }
+
+/* ---- Top: icon + temp + condition (no background) ---------- */
+.ww-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.85rem 1rem 0.65rem;
+  width: 100%;
+}
+
+.ww-icon { font-size: 2.8rem; line-height: 1; margin-bottom: 0.2rem; }
+.ww-temp { font-size: 2.2rem; font-weight: 200; letter-spacing: -0.02em; line-height: 1.1; color: #222; }
+.ww-cond { font-size: 0.8rem; font-weight: 500; color: #777; margin-top: 0.1rem; }
+
+[data-bs-theme=dark] .ww-temp { color: #dde4f0; }
+[data-bs-theme=dark] .ww-cond { color: #8899b0; }
+
+/* ---- Info row: all metadata in one line -------------------- */
+.ww-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 0.15rem;
+  padding: 0.4rem 0.85rem 0.45rem;
+  border-top: 1px solid rgba(0,0,0,0.07);
+  width: 100%;
+  font-size: 0.76rem;
+  color: #555;
+  box-sizing: border-box;
+}
+[data-bs-theme=dark] .ww-row { border-top-color: rgba(255,255,255,0.07); color: #8899b0; }
+
+.ww-loc { font-weight: 600; color: #333; }
+[data-bs-theme=dark] .ww-loc { color: #d0d8e8; }
+
+/* dot separator between each span */
+.ww-row span + span::before {
+  content: '·';
+  margin: 0 0.35rem;
+  opacity: 0.35;
+}
+
+/* ---- Footer ------------------------------------------------ */
+.ww-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.3rem 0.85rem 0.45rem;
+  border-top: 1px solid rgba(0,0,0,0.07);
+  width: 100%;
+}
+[data-bs-theme=dark] .ww-footer { border-top-color: rgba(255,255,255,0.07); }
+
+.ww-updated { font-size: 0.67rem; color: #aaa; }
+[data-bs-theme=dark] .ww-updated { color: #5a6880; }
+
+.ww-refresh-btn {
+  background: none; border: none; padding: 0;
+  cursor: pointer; font-size: 0.95rem; color: #aaa; line-height: 1;
+}
+.ww-refresh-btn:hover { color: #333; }
+[data-bs-theme=dark] .ww-refresh-btn:hover { color: #dde4f0; }
+
+/* ---- KN Theme ---------------------------------------------- */
+body.kn .ww-loc     { color: #003B6F; }
+body.kn .ww-spinner { border-top-color: #0076BE; }
+
+[data-bs-theme=dark] body.kn .ww-wrap    { background: rgba(0,34,68,0.95); }
+[data-bs-theme=dark] body.kn .ww-loc     { color: #5db0e6; }
+[data-bs-theme=dark] body.kn .ww-row     { color: rgba(120,175,220,0.75); border-top-color: rgba(0,123,190,0.2); }
+[data-bs-theme=dark] body.kn .ww-footer  { border-top-color: rgba(0,123,190,0.2); }
+[data-bs-theme=dark] body.kn .ww-spinner { border-top-color: #0076BE; }
+
+/* ---- Terminal Theme ----------------------------------------- */
+body.terminal .ww-wrap    { background: #edf5e8; }
+body.terminal .ww-loc     { color: #1a5c1a; font-family: 'Courier New', Courier, monospace; }
+body.terminal .ww-temp    { font-family: 'Courier New', Courier, monospace; }
+body.terminal .ww-row     { color: #3d7a3d; border-top-color: rgba(45,122,45,0.2); }
+body.terminal .ww-footer  { border-top-color: rgba(45,122,45,0.2); }
+body.terminal .ww-spinner { border-color: rgba(45,122,45,0.15); border-top-color: #2d7a2d; }
+
+[data-bs-theme=dark] body.terminal .ww-wrap    { background: #0a1a0a; }
+[data-bs-theme=dark] body.terminal .ww-loc     { color: rgba(26,170,26,0.9); }
+[data-bs-theme=dark] body.terminal .ww-row     { color: rgba(26,170,26,0.6); border-top-color: rgba(26,170,26,0.15); }
+[data-bs-theme=dark] body.terminal .ww-footer  { border-top-color: rgba(26,170,26,0.15); }
+[data-bs-theme=dark] body.terminal .ww-updated { color: rgba(26,170,26,0.4); }
+[data-bs-theme=dark] body.terminal .ww-refresh-btn { color: rgba(26,170,26,0.6); }
+[data-bs-theme=dark] body.terminal .ww-spinner { border-color: rgba(26,170,26,0.15); border-top-color: rgba(26,170,26,0.85); }
+</style>
+
+% if ($has_loc) {
+<script>
+(function () {
+  var ID       = '<% $wid | n %>';
+  var CITY     = <% $js_city    | n %>;
+  var ZIP      = <% $js_zip     | n %>;
+  var COUNTRY  = <% $js_country | n %>;
+  var DISP_LOC = <% $js_loc     | n %>;
+  var UNIT     = <% $js_unit    | n %>;
+  var CACHE_KEY = 'ww_v1_' + (CITY + '|' + ZIP + '|' + COUNTRY).replace(/[^a-z0-9]/gi, '_');
+  var CACHE_TTL = 30 * 60 * 1000;
+
+  /* ---- WMO weather code map -------------------------------- */
+  var WMO = {
+    0:  { de: 'Klarer Himmel',              icon: '☀️',  bg: 'sunny'  },
+    1:  { de: 'Überwiegend klar',           icon: '🌤️', bg: 'sunny'  },
+    2:  { de: 'Teilweise bewölkt',          icon: '⛅',  bg: 'cloudy' },
+    3:  { de: 'Bedeckt',                    icon: '☁️',  bg: 'cloudy' },
+    45: { de: 'Nebel',                      icon: '🌫️', bg: 'fog'    },
+    48: { de: 'Nebel mit Reifbildung',      icon: '🌫️', bg: 'fog'    },
+    51: { de: 'Leichter Nieselregen',       icon: '🌦️', bg: 'rain'   },
+    53: { de: 'Mäßiger Nieselregen',        icon: '🌦️', bg: 'rain'   },
+    55: { de: 'Starker Nieselregen',        icon: '🌧️', bg: 'rain'   },
+    56: { de: 'Gefrierender Nieselregen',   icon: '🌧️', bg: 'rain'   },
+    57: { de: 'Gefrierender Nieselregen',   icon: '🌧️', bg: 'rain'   },
+    61: { de: 'Leichter Regen',             icon: '🌧️', bg: 'rain'   },
+    63: { de: 'Mäßiger Regen',              icon: '🌧️', bg: 'rain'   },
+    65: { de: 'Starker Regen',              icon: '🌧️', bg: 'rain'   },
+    66: { de: 'Gefrierender Regen',         icon: '🌨️', bg: 'snow'   },
+    67: { de: 'Gefrierender Regen (stark)', icon: '🌨️', bg: 'snow'   },
+    71: { de: 'Leichter Schneefall',        icon: '🌨️', bg: 'snow'   },
+    73: { de: 'Mäßiger Schneefall',         icon: '❄️',  bg: 'snow'   },
+    75: { de: 'Starker Schneefall',         icon: '❄️',  bg: 'snow'   },
+    77: { de: 'Schneekörner',               icon: '🌨️', bg: 'snow'   },
+    80: { de: 'Leichte Regenschauer',       icon: '🌦️', bg: 'rain'   },
+    81: { de: 'Mäßige Regenschauer',        icon: '🌧️', bg: 'rain'   },
+    82: { de: 'Starke Regenschauer',        icon: '🌧️', bg: 'rain'   },
+    85: { de: 'Leichte Schneeschauer',      icon: '🌨️', bg: 'snow'   },
+    86: { de: 'Starke Schneeschauer',       icon: '❄️',  bg: 'snow'   },
+    95: { de: 'Gewitter',                   icon: '⛈️',  bg: 'storm'  },
+    96: { de: 'Gewitter mit Hagel',         icon: '⛈️',  bg: 'storm'  },
+    99: { de: 'Gewitter mit schwerem Hagel',icon: '⛈️',  bg: 'storm'  }
+  };
+
+  /* ---- DOM refs -------------------------------------------- */
+  var wrap    = document.getElementById(ID);
+  var sLoad   = wrap.querySelector('.ww-loading');
+  var sErr    = wrap.querySelector('.ww-error');
+  var sCont   = wrap.querySelector('.ww-content');
+  var errMsg  = wrap.querySelector('.ww-err-msg');
+  var iconEl  = wrap.querySelector('.ww-icon');
+  var tempEl  = wrap.querySelector('.ww-temp');
+  var condEl  = wrap.querySelector('.ww-cond');
+  var locEl   = wrap.querySelector('.ww-loc');
+  var feelsEl = wrap.querySelector('.ww-feels');
+  var windEl  = wrap.querySelector('.ww-wind');
+  var humEl   = wrap.querySelector('.ww-hum');
+  var updEl   = wrap.querySelector('.ww-updated');
+
+  var _loadTimer = null;
+
+  function showState(el) {
+    if (_loadTimer) { clearTimeout(_loadTimer); _loadTimer = null; }
+    [sLoad, sErr, sCont].forEach(function(e) { e.hidden = true; });
+    el.hidden = false;
+  }
+
+  function showLoading() {
+    [sLoad, sErr, sCont].forEach(function(e) { e.hidden = true; });
+    sLoad.hidden = false;
+    _loadTimer = setTimeout(function() {
+      showError('Zeitüberschreitung — Wetterdaten konnten nicht abgerufen werden.');
+    }, 12000);
+  }
+
+  function showError(msg) {
+    errMsg.textContent = msg;
+    showState(sErr);
+  }
+
+  /* ---- Render ---------------------------------------------- */
+  function render(weather) {
+    var cur   = weather.current;
+    var code  = cur.weather_code;
+    var isDay = cur.is_day !== 0;
+    var info  = WMO[code] || WMO[Math.floor(code / 10) * 10] ||
+                { de: 'Unbekannt', icon: '🌡️', bg: 'cloudy' };
+
+    if (!isDay && code === 0) {
+      info = { de: 'Klare Nacht', icon: '🌙', bg: 'night' };
+    }
+
+    var unit   = UNIT === 'fahrenheit' ? '°F' : '°C';
+    var temp   = Math.round(cur.temperature_2m);
+    var feels  = Math.round(cur.apparent_temperature);
+    var wind   = Math.round(cur.wind_speed_10m);
+    var hum    = cur.relative_humidity_2m;
+    var now    = new Date();
+    var timeStr = now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+
+    iconEl.textContent  = info.icon;
+    tempEl.textContent  = temp + unit;
+    condEl.textContent  = info.de;
+    locEl.textContent   = '📍 ' + DISP_LOC;
+    feelsEl.textContent = 'Gefühlt ' + feels + unit;
+    windEl.textContent  = '💨 ' + wind + ' km/h';
+    humEl.textContent   = '💧 ' + hum + ' %';
+    updEl.textContent   = 'Aktualisiert ' + timeStr;
+
+    showState(sCont);
+
+    try {
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), weather: weather }));
+    } catch(e) {}
+  }
+
+  /* ---- API calls ------------------------------------------- */
+  function fetchWeather(lat, lon) {
+    var url = 'https://api.open-meteo.com/v1/forecast'
+      + '?latitude='  + lat
+      + '&longitude=' + lon
+      + '&current=temperature_2m,apparent_temperature,weather_code,'
+      + 'wind_speed_10m,relative_humidity_2m,is_day'
+      + '&wind_speed_unit=kmh'
+      + '&temperature_unit=' + UNIT
+      + '&timezone=auto';
+
+    fetch(url)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data) { render(data); })
+      .catch(function() { showError('Wetterdaten konnten nicht geladen werden.'); });
+  }
+
+  function geocodeAndLoad() {
+    /* Build Nominatim structured query from user profile fields */
+    var params = ['format=json', 'limit=1', 'addressdetails=0'];
+    if (ZIP)     params.push('postalcode=' + encodeURIComponent(ZIP));
+    if (CITY)    params.push('city='       + encodeURIComponent(CITY));
+    if (COUNTRY) params.push('country='    + encodeURIComponent(COUNTRY));
+
+    fetch('https://nominatim.openstreetmap.org/search?' + params.join('&'), {
+      headers: { 'Accept-Language': 'de' }
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data || !data.length) {
+          showError('Standort "' + DISP_LOC + '" konnte nicht gefunden werden.');
+          return;
+        }
+        fetchWeather(parseFloat(data[0].lat), parseFloat(data[0].lon));
+      })
+      .catch(function() { showError('Geocoding fehlgeschlagen.'); });
+  }
+
+  /* ---- Init ------------------------------------------------ */
+  function init() {
+    showLoading();
+
+    /* Try cache first */
+    try {
+      var cached = JSON.parse(sessionStorage.getItem(CACHE_KEY));
+      if (cached && (Date.now() - cached.ts) < CACHE_TTL) {
+        render(cached.weather);
+        return;
+      }
+    } catch(e) {}
+
+    geocodeAndLoad();
+  }
+
+  /* ---- Event listeners ------------------------------------- */
+  wrap.querySelector('.ww-retry-btn').addEventListener('click', function() {
+    try { sessionStorage.removeItem(CACHE_KEY); } catch(e) {}
+    init();
+  });
+
+  wrap.querySelector('.ww-refresh-btn').addEventListener('click', function() {
+    try { sessionStorage.removeItem(CACHE_KEY); } catch(e) {}
+    init();
+  });
+
+  try {
+    init();
+  } catch(e) {
+    showError('Interner Fehler: ' + e.message);
+  }
+})();
+</script>
+% }
+
+</&>

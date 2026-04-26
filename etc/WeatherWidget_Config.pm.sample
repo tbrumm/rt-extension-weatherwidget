@@ -1,0 +1,6 @@
+# RT-Extension-WeatherWidget — sample configuration
+# Copy the relevant lines into /opt/rt6/etc/RT_SiteConfig.pm
+
+Set(%WeatherWidgetOptions,
+    TemperatureUnit => 'celsius',   # 'celsius' or 'fahrenheit'
+);
